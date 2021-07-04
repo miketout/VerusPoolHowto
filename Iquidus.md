@@ -1,28 +1,28 @@
-# ElectrumX for VerusCoin
+# Iquidus Explorer for Verus
 
 **NOTE:** For all downloads mentioned below you are encouraged use the [Verus Signature verification tool](https://verus.io/verify-signatures) or a local standalone Verus daemon to make sure the files are authentic and have not been tampered with. Additionally, the setup described below is in no way production ready but is meant to illustrate the general process only. **System hardening, firewalling, signature verification and other measures are outside of the scope of this guide. You will have to take care of it for yourself!**
 
 ## Server
 
-A VPS with 6GB of RAM, anything from 40GB SSD storage and 2 CPU cores is the absolute minimum requirement. Start following the guide while logged in as `root`.
+A VPS with 4GB of RAM, anything from 30GB SSD storage and 2 CPU cores is the absolute minimum requirement. Start following the guide while logged in as `root`.
 
 ## Operating System
 
-This guide tailored to and tested on `Debian 10 "Buster"` but should probably also work on Debian-ish derivatives like `Devuan` or `Ubuntu` and others. This guide contains `systemd`-specific instuctions below, make sure to adapt them to your init system of choice. Before starting, please install the latest updates and prerequisites. 
+This guide tailored to and tested on `Debian 10 "Buster"` but should probably also work on Debian-ish derivatives like `Devuan` or `Ubuntu` and others. Before starting, please install the latest updates and prerequisites. 
 
 ```bash
 apt update
 apt upgrade
-apt install wget libgomp1 git python3.7 python3-pip build-essential libleveldb-dev libboost-all-dev
-pip3 install multidict chardet plyvel uvloop
+apt install wget libgomp1 git python build-essential
 ```
+
+Additionally, Iquidus requires a MongoDB backend. Please refer to [this](https://docs.mongodb.com/manual/tutorial/install-mongodb-on-debian/) document for MongoDB install instructions.
 
 With the minimum memory requirement above, `dphys-swapfile` will be necessary. It will create a 2GB swap file per default, which is sufficient. In situations where more memory is available, installation of `dphys-swapfile` can be skipped altogether.
 
 ```bash
 apt install dphys-swapfile
 ```
-
 
 ## Verus Node
 
@@ -79,10 +79,10 @@ Create (and where necessary, adapt) a `VRSC.conf` file.
 ```bash
 cat << EOF > ~/.komodo/VRSC/VRSC.conf
 ##
-## verus electrum node config
+## verus iquidus node config
 ##
 
-# electrum doesn't need a wallet
+# explorer doesn't need a wallet
 disablewallet=1
 
 # network options
@@ -143,108 +143,84 @@ Now exit the `verus` account.
 exit
 ```
 
-## verushashpy
+## NodeJS
 
-Install the `verushashpy` module as shown below. 
-
-```bash
-cd /usr/src
-git clone https://github.com/veruscoin/verushashpy
-cd verushashpy
-python3.7 setup.py install
-```
-
-## ElectrumX Installation
-
-Create a new system user for `electrumx`.
-
-```
-useradd -rMs /bin/false electrumx
-```
-
-Now, check out the ElectrumX repo and install it:
-
-```
-cd /usr/src
-git clone https://github.com/spesmilo/electrumx
-cd electrumx; python3.7 setup.py install
-```
-
-## ElectrumX Configuration
-
-Copy over the `systemd` unit file and create a datadir. Assign ownership of the datadir to the `electrumx` user.
+Create a user account to run `iquidus` from and switch to it. Within this user account `nvm.sh` and ultimately `NodeJS` will be installed.
 
 ```bash
-cp /usr/src/electrumx/contrib/systemd/electrumx.service /etc/systemd/system
-mkdir -p /electrumdb/VRSC
-chown electrumx:electrumx /electrumdb/VRSC
+useradd -m -d /home/iquidus -s /bin/bash iquidus
+su - iquidus
 ```
 
-Create a config file for electrumx called `/etc/electrumx.conf`. See [here](https://electrumx.readthedocs.io/en/latest/environment.html) for the full list of configuration options.
+Prepare the `~/bin` directory and add it to the users' `PATH`.
 
 ```bash
-cat << EOF >/etc/electrumx.conf
-COIN="Verus"
-DB_DIRECTORY="/electrumdb/VRSC"
-DAEMON_URL="http://verus:OBVIOUSLY-EDIT-HERE@127.0.0.1:27486/"
-
-LOG_FORMAT="%(asctime)s %(levelname)s:%(name)s:%(message)s"
-LOG_LEVEL="info"
-
-SERVICES="tcp://0.0.0.0:17485,tcp://[::]:17485,rpc://127.0.0.1:17489,rpc://[::1]:17489"
-MAX_SESSIONS="5000"
-
-DB_ENGINE="leveldb"
-EVENT_LOOP_POLICY="uvloop"
-
-REQUEST_TIMEOUT="30"
-SESSION_TIMEOUT="600"
-
-BANDWIDTH_UNIT_COST="50000"
-INITIAL_CONCURRENT="100"
-COST_SOFT_LIMIT="0"
-COST_HARD_LIMIT="0"
-
-CACHE_MB="1500"
-EOF
+mkdir ~/bin
+echo export PATH=\"${PATH}:/home/iquidus/bin\" >> ~/.bashrc
 ```
 
-Make sure the VerusCoin wallet is running. You should now be able to start ElectrumX.
+Install NodeJS v9 using `nvm.sh` like this: 
 
-```
-systemctl start electrumx.service
-```
-
-Display the logs with this command:
-
-```
-journalctl -fu electrumx.service
+```bash
+wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash
 ```
 
-Enable autostart with this command:
+To activate the changes, log out of and back into the `iquidus` account.
 
-```
-systemctl enable electrumx.service
-```
-
-Initial sync will take up to 3 hours to complete. Before that is done, ElectrumX will only allow RPC connections via loopback, but no external connections. To check ElectrumX status, do
-
-```
-electrumx_rpc getinfo
+```bash
+exit
+su - iquidus
 ```
 
-To see info about connected clients, execute
+Install and activate NodeJS v12.
 
 ```
-electrumx_rpc sessions
+nvm install 12
+nvm use 12
 ```
 
-### Enable `logrotate` for `verusd`
+Within the `iquidus` account scope, globally install `pm2` as shown below.
 
-As `root` user, create a file called `/etc/logrotate.d/verus` with these contents:
+```bash
+npm -g install pm2
+```
+
+## Iquidus Installation
+
+While still logged in as the `iquidus` user, clone the Iquidus repository.
+
+```bash
+cd ~/
+git clone https://github.com/BloodyNora/explorer
+```
+
+See https://github.com/BloodyNora/explorer for the basic of install instructions of Iquidus. Read this document thoroughly, it contains information about the MongoDB backend, necessary steps for initial data import (also see right below) and keeping the explorer in sync with the Verus chain. 
+
+**NOTE:** Before starting an init sync, in the resulting installed `node_modules`, we need to disable `json-bigint strict mode` in 3 places: 
+
+```bash
+node_modules/bitcoin-node-api/node_modules/bitcoin-core/coverage/src/parser.js.html:251
+node_modules/bitcoin-node-api/node_modules/bitcoin-core/dist/src/parser.js:27
+node_modules/bitcoin-core/dist/src/parser.js:27
+```
+
+Each place has a representation of `strict: true` which needs to be changed to `strict: false` within the respective syntax limits.
+
+To setup Iquidus the way you like it, copy `settings.json.template` to `settings.json` and adapt where necessary. Launch the explorer using `pm2` and follow the log output to make sure Iquidus starts up allright. Ideally, Iquidus is now listening on the IP and Port you have configured.
+
+```bash
+cd ~/explorer
+pm2 start --name "explorer" "npm start"; pm2 log all
+```
+
+### Enable `logrotate`
+
+As `root` user, create a file called `/etc/logrotate.d/verus-iquidus` with these contents:
 
 ```
 /home/verus/.komodo/VRSC/debug.log
+/home/iquidus/.pm2/logs/explorer.VRSC-out.log
+/home/iquidus/.pm2/logs/explorer.VRSC-error.log
 {
   rotate 14
   daily
@@ -256,8 +232,7 @@ As `root` user, create a file called `/etc/logrotate.d/verus` with these content
 }
 ```
 
-### Autostart `verusd` using `cron`
-
+### Autostart using `cron`
 
 Switch to the `verus` user. Edit the `crontab` using `crontab -e` and add this to the appropriate place:
 
@@ -265,3 +240,12 @@ Switch to the `verus` user. Edit the `crontab` using `crontab -e` and add this t
 PATH=".:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/home/verus/bin"
 @reboot cd /home/verus/.komodo/VRSC && /home/verus/bin/verusd -daemon 1>/dev/null 2>&1
 ```
+
+Switch to the `iquidus` user. Edit the `crontab` using `crontab -e` and add this to the appropriate place:
+
+```crontab
+PATH=".:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/home/iquidus/bin:/home/iquidus/.nvm/versions/node/v12.20.0/bin"
+@reboot cd /home/iquidus/explorer && pm2 start --name explorer "npm start" 1>/dev/null 2>&1
+```
+
+**NOTE:** with every NodeJS update, the last part of the `PATH` variable from the `iquidus` crontab may change since it has a version number in it.
